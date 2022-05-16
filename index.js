@@ -1,8 +1,63 @@
+const { ServiceBusClient } = require("@azure/service-bus");
 const express = require('express');
 const app = express();
+const keys = require('./config/keys');
+const stripe = require('stripe');
 
-app.get('/',(req,res)=>{
-    res.send({message:'Deployment Check!'});
+const connectionString = keys.creds.AzSBConnectionString;
+const queueName = "akdctransferrequest";
+const sbClient = new ServiceBusClient(connectionString);
+const sender = sbClient.createSender(queueName);
+
+const endpointSecret = keys.creds.StripeWHSecret;
+
+app.post('/webhook',
+    express.raw({type: 'application/json'}),
+    async (req,res)=>{
+
+    const sig = req.headers['stripe-signature'];
+    
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+      res.status(400).send(`Webhook Error: ${err.message}`);
+      return;
+    }
+
+    let paymentIntent=null;
+    switch (event.type) {
+        case 'payment_intent.succeeded':
+          paymentIntent = event.data.object;
+          // Then define and call a function to handle the event payment_intent.succeeded
+          break;
+        
+        default:
+          console.log(`Unhandled event type ${event.type}`);
+    }
+
+    if(paymentIntent)
+    {
+        let sbMessage = await sender.createMessageBatch();
+        const messageBody = {
+            command:"Fulfill",
+            destWallet:paymentIntent.metadata.walletAddress,            
+            akdcs:(paymentIntent.amount/1000).toFixed(2),
+            stripePaymentIntent:paymentIntent.id
+        };        
+    
+        if(!sbMessage.tryAddMessage({body:messageBody,contentType:"application/json"}))
+        {
+            res.status = 500;
+            res.send("Failed to send message");
+            return;
+        }
+        
+        await sender.sendMessages(sbMessage);
+    }
+    
+    res.send({message:'Payout Completed!'});
 });
 
 const PORT = process.env.PORT || 5000; 
