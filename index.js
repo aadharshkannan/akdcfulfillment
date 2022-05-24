@@ -43,7 +43,7 @@ app.post('/webhook',
         const messageBody = {
             command:"Fulfill",
             destWallet:paymentIntent.metadata.walletAddress,            
-            akdcs:(paymentIntent.amount/1000).toFixed(2),
+            akdcs:(paymentIntent.amount/100).toFixed(2),
             stripePaymentIntent:paymentIntent.id
         };        
     
