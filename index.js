@@ -1,15 +1,52 @@
 const { ServiceBusClient } = require("@azure/service-bus");
 const express = require('express');
+const bodyParser = require('body-parser')
+const jsonParser = bodyParser.json()
+
 const app = express();
 const keys = require('./config/keys');
 const stripe = require('stripe');
 
 const connectionString = keys.creds.AzSBConnectionString;
 const queueName = "akdctransferrequest";
+const solQueueName = "akdcsoltransferrequest";
 const sbClient = new ServiceBusClient(connectionString);
 const sender = sbClient.createSender(queueName);
+const senderSol = sbClient.createSender(solQueueName);
 
 const endpointSecret = keys.creds.StripeWHSecret;
+const cryptoSolSecret = keys.creds.SolTransferPostSecret;
+
+app.post('/cryptosol',
+jsonParser,
+async (req,res)=>{
+
+const reqSecret = req.query.solsecret;
+
+if(reqSecret !== cryptoSolSecret)
+{
+  res.status(400).send(`Crypto Sol Secret Missing`);
+  return;
+}
+let sbMessage = await sender.createMessageBatch();
+const messageBody = {
+    command:"Transfer",
+    destWallet:req.body.walletAddress,            
+    akdcs:(req.body.amount/100).toFixed(2),
+    transactionHash:req.body.txHash
+};        
+
+if(!sbMessage.tryAddMessage({body:messageBody,contentType:"application/json"}))
+{
+    res.status = 500;
+    res.send("Failed to send message");
+    return;
+}
+
+await senderSol.sendMessages(sbMessage);
+
+res.send({message:'Transfer Completed!'});
+});
 
 app.post('/webhook',
     express.raw({type: 'application/json'}),
